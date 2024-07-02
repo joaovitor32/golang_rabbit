@@ -3,22 +3,34 @@ package rabbit_mq
 import (
 	"context"
 	"log"
-	"os"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-func Publish() error {
-	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
-	failOnError(err, "Failed to connect to RabbitMQ")
-	defer conn.Close()
+type RabbitMQPublisher struct {
+	conn    *amqp.Connection
+	channel *amqp.Channel
+}
+
+func NewRabbitMQPublisher(url string) (*RabbitMQPublisher, error) {
+	conn, err := amqp.Dial(url)
+	if err != nil {
+		return nil, err
+	}
 
 	ch, err := conn.Channel()
-	failOnError(err, "Failed to open a channel")
-	defer ch.Close()
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
 
-	err = ch.ExchangeDeclare(
+	publisher := &RabbitMQPublisher{
+		conn:    conn,
+		channel: ch,
+	}
+
+	err = publisher.channel.ExchangeDeclare(
 		"logs",   // name
 		"fanout", // type
 		true,     // durable
@@ -27,26 +39,46 @@ func Publish() error {
 		false,    // no-wait
 		nil,      // arguments
 	)
-	failOnError(err, "Failed to declare an exchange")
+	if err != nil {
+		publisher.Close()
+		return nil, err
+	}
 
+	return publisher, nil
+}
+
+func (p *RabbitMQPublisher) Publish(messages []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	body := bodyFrom(os.Args)
+	for _, message := range messages {
+		err := p.channel.PublishWithContext(ctx,
+			"logs", // exchange
+			"",     // routing key
+			false,  // mandatory
+			false,  // immediate
+			amqp.Publishing{
+				ContentType: "text/plain",
+				Body:        []byte(message),
+			})
+		if err != nil {
+			return err
+		}
 
-	err = ch.PublishWithContext(ctx,
-		"logs", // exchange
-		"",     // routing key
-		false,  // mandatory
-		false,  // immediate
-		amqp.Publishing{
-			ContentType: "text/plain",
-			Body:        []byte(body),
-		})
+		log.Printf("[PUBLISHER] [x] Sent %s", message)
+		time.Sleep(time.Second/2)
+		ctx.Done()
+	}
 
-	failOnError(err, "Failed to publish a message")
-
-	log.Printf(" [x] Sent %s", body)
-
-	return err
+	return nil
 }
+
+func (p *RabbitMQPublisher) Close() {
+	if p.channel != nil {
+		p.channel.Close()
+	}
+	if p.conn != nil {
+		p.conn.Close()
+	}
+}
+

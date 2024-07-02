@@ -2,15 +2,17 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"sync"
-	"time"
 
 	rabbit_mq "github.com/joaovitor32/golang_rabbit/internal"
 )
 
+const URI = "amqp://guest:guest@localhost:5672/"
+
 func main() {
 	var wg sync.WaitGroup
-	started := make(chan struct{})
+	ready := make(chan struct{}, 1) // Buffered channel
 
 	wg.Add(2)
 
@@ -18,20 +20,39 @@ func main() {
 	go func() {
 		defer wg.Done()
 		fmt.Println("Starting Subscribe...")
-		rabbit_mq.Subscribe(started)
-		fmt.Println("Subscribe started")
+
+		subscriber, err := rabbit_mq.NewRabbitMQSubscriber(URI, ready)
+		if err != nil {
+			log.Fatalf("Failed to create RabbitMQ subscriber: %v", err)
+		}
+		// Signal that subscriber has started
+
+		subscriber.WaitForReady()
+
+		defer subscriber.Close()
 	}()
 
 	// Publish goroutine
 	go func() {
 		defer wg.Done()
+
 		// Wait for the signal that Subscribe has started
-		<-started
 		fmt.Println("Starting Publish after Subscribe...")
-		// Optional delay to ensure Subscribe is fully ready
-		time.Sleep(1 * time.Second)
-		rabbit_mq.Publish()
+		ready <- struct{}{}
+		
+		messages := []string{"Never", "gonna", "give", "you", "up", "never", "gonna", "let", "you", "down", "and", "hurt", "you"}
+		publisher, err := rabbit_mq.NewRabbitMQPublisher(URI)
+		if err != nil {
+			log.Fatalf("Failed to create RabbitMQ publisher: %v", err)
+		}
+
+		defer publisher.Close()
+
 		fmt.Println("Publish started")
+		err = publisher.Publish(messages)
+		if err != nil {
+			log.Fatalf("Failed to publish messages: %v", err)
+		}
 	}()
 
 	// Wait for both goroutines to complete

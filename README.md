@@ -1,11 +1,5 @@
 ### Usage
 
 ```
-docker compose up --build
-./cmd/main.go
-```
-
-```
-Username: guest
-Password: guest
+docker compose up --build -d && go run ./cmd/main.go
 ```

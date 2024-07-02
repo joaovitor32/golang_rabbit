@@ -1,19 +1,35 @@
 package rabbit_mq
 
 import (
+	"fmt"
 	"log"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-func Subscribe(ready chan<- struct{}) {
-	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
-	failOnError(err, "Failed to connect to RabbitMQ")
-	defer conn.Close()
+type RabbitMQSubscriber struct {
+	connection *amqp.Connection
+	channel    *amqp.Channel
+	queue      amqp.Queue
+	msgs       <-chan amqp.Delivery
+	ready      chan<- struct{}
+	done       chan struct{}
+}
+
+func NewRabbitMQSubscriber(amqpURI string, ready chan <-struct{}) (*RabbitMQSubscriber, error) {
+	subscriber := &RabbitMQSubscriber{ready: ready}
+
+	conn, err := amqp.Dial(amqpURI)
+	if err != nil {
+		return nil, err
+	}
+	subscriber.connection = conn
 
 	ch, err := conn.Channel()
-	failOnError(err, "Failed to open a channel")
-	defer ch.Close()
+	if err != nil {
+		return nil, err
+	}
+	subscriber.channel = ch
 
 	err = ch.ExchangeDeclare(
 		"logs",   // name
@@ -24,7 +40,9 @@ func Subscribe(ready chan<- struct{}) {
 		false,    // no-wait
 		nil,      // arguments
 	)
-	failOnError(err, "Failed to declare an exchange")
+	if err != nil {
+		return nil, err
+	}
 
 	q, err := ch.QueueDeclare(
 		"",    // name
@@ -34,7 +52,10 @@ func Subscribe(ready chan<- struct{}) {
 		false, // no-wait
 		nil,   // arguments
 	)
-	failOnError(err, "Failed to declare a queue")
+	if err != nil {
+		return nil, err
+	}
+	subscriber.queue = q
 
 	err = ch.QueueBind(
 		q.Name, // queue name
@@ -43,7 +64,9 @@ func Subscribe(ready chan<- struct{}) {
 		false,
 		nil,
 	)
-	failOnError(err, "Failed to bind a queue")
+	if err != nil {
+		return nil, err
+	}
 
 	msgs, err := ch.Consume(
 		q.Name, // queue
@@ -54,18 +77,44 @@ func Subscribe(ready chan<- struct{}) {
 		false,  // no-wait
 		nil,    // args
 	)
-	failOnError(err, "Failed to register a consumer")
+	if err != nil {
+		return nil, err
+	}
 
-	// Signal that Subscribe is ready
-	ready <- struct{}{}
+	// Start a goroutine to consume messages continuously
+	go subscriber.consumeMessages(msgs)
 
-	go func() {
-		for d := range msgs {
-			log.Printf(" [x] %s", d.Body)
+	return subscriber, nil
+}
+
+func (s *RabbitMQSubscriber) consumeMessages(msgs <-chan amqp.Delivery) {
+	for {
+		select {
+		case msg, ok := <-msgs:
+			if !ok {
+				log.Println("Channel closed, stopping message consumption")
+				return
+			}
+			fmt.Printf("[CONSUMER] Received a message: %s\n", msg.Body)
+
+			// Process the message here
+
+		case <-s.done:
+			log.Println("Stopping message consumption")
+			return
 		}
-	}()
+	}
+}
 
-	log.Printf(" [*] Waiting for logs. To exit press CTRL+C")
-	var forever chan struct{}
-	<-forever
+func (s *RabbitMQSubscriber) Close() {
+	if s.channel != nil {
+		s.channel.Close()
+	}
+	if s.connection != nil {
+		s.connection.Close()
+	}
+}
+
+func (s *RabbitMQSubscriber) WaitForReady() {
+	s.ready <- struct{}{}
 }
