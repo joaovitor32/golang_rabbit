@@ -2,7 +2,7 @@ package rabbit_mq
 
 import (
 	"context"
-	"log"
+	"fmt"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -65,7 +65,7 @@ func (p *RabbitMQPublisher) Publish(messages []string) error {
 			return err
 		}
 
-		log.Printf("[PUBLISHER] [x] Sent %s", message)
+		fmt.Printf("[PUBLISHER] [x] Sent %s\n", message)
 		time.Sleep(time.Second/2)
 		ctx.Done()
 	}

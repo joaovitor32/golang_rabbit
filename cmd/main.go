@@ -9,6 +9,7 @@ import (
 )
 
 const URI = "amqp://guest:guest@localhost:5672/"
+var messages = []string{"Never", "gonna", "give", "you", "up", "never", "gonna", "let", "you", "down", "and", "hurt", "you"}
 
 func main() {
 	var wg sync.WaitGroup
@@ -40,7 +41,6 @@ func main() {
 		fmt.Println("Starting Publish after Subscribe...")
 		ready <- struct{}{}
 		
-		messages := []string{"Never", "gonna", "give", "you", "up", "never", "gonna", "let", "you", "down", "and", "hurt", "you"}
 		publisher, err := rabbit_mq.NewRabbitMQPublisher(URI)
 		if err != nil {
 			log.Fatalf("Failed to create RabbitMQ publisher: %v", err)
